@@ -13,6 +13,16 @@ const {
     fetchLocalDataMock 
 } = require('./services');
 
+// ============================================================
+// STARTUP GUARD — fail fast with a clear message
+// ============================================================
+const REQUIRED_ENV = ['GEMINI_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
+const missing = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missing.length > 0) {
+    console.error(`\n[AgriSpark] FATAL: Missing required environment variables:\n  ${missing.join(', ')}\nPlease copy .env.example to .env and fill in your values.\n`);
+    process.exit(1);
+}
+
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
@@ -95,7 +105,9 @@ app.post('/voice/mode-selection', (req, res) => {
 app.post('/voice/quick-query-process', async (req, res) => {
     const session = getSession(req.body.CallSid);
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say({ language: session.lang }, 'Analyzing your question...');
+    // FIX: use the correct language for this message
+    const analyzingMsg = session.lang === 'th-TH' ? 'กรุณารอสักครู่ กำลังวิเคราะห์คำถามของคุณค่ะ' : 'Analyzing your question, please wait.';
+    twiml.say({ language: session.lang }, analyzingMsg);
     twiml.redirect('/voice/quick-query-gather');
     res.type('text/xml');
     res.send(twiml.toString());
@@ -139,6 +151,13 @@ app.post('/voice/detailed-plan-process', async (req, res) => {
     const speechResult = req.body.SpeechResult || 'Unknown response';
     const twiml = new twilio.twiml.VoiceResponse();
     const result = await generateDetailedPlanConversation(session.params, speechResult, session.lang);
+
+    // FIX: persist the updated farmer params back into the session so data
+    // is not lost between turns (this was the main reason collection never completed)
+    if (result.updatedParams) {
+        session.params = { ...session.params, ...result.updatedParams };
+    }
+
     if (result.message.toLowerCase().includes('whatsapp') || result.message.toLowerCase().includes('pdf')) {
         twiml.say({ language: session.lang }, result.message);
         twiml.say({ language: session.lang }, session.lang === 'th-TH' ? 'ขอบคุณที่ใช้บริการ ลาก่อนค่ะ' : 'Thank you for using AgriSpark. Goodbye.');
@@ -162,9 +181,13 @@ app.post('/whatsapp/chat', async (req, res) => {
     const hasMedia = numMedia > 0;
     const isThai = /[\u0E00-\u0E7F]/.test(textMsg);
     const lang = isThai ? 'th-TH' : 'en-US';
+
+    // FIX: pass the actual media URL so Gemini can analyse the real image
+    // Twilio provides MediaUrl0, MediaUrl1, etc. for each attachment
+    const mediaUrl = hasMedia ? req.body.MediaUrl0 : null;
     
     try {
-        const answer = await generateVisionDiagnostic(textMsg, hasMedia, lang);
+        const answer = await generateVisionDiagnostic(textMsg, hasMedia, lang, mediaUrl);
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(answer);
         res.type('text/xml');
