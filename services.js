@@ -2,14 +2,29 @@ const { GoogleGenAI } = require('@google/genai');
 const axios = require('axios');
 const { MASTER_PROMPT } = require('./prompts');
 
-const apiKey = process.env.GEMINI_API_KEY;
-
+// Initialise once — throws clearly if key is missing
 function getAI() {
-    if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
-    return new GoogleGenAI({ apiKey });
+    if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY env var is not set');
+    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 }
 
-// Fetches a Twilio-hosted media file as base64
+// @google/genai v1.x correct call — config key, NOT generationConfig
+async function callGemini(prompt, opts = {}) {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,          // string shorthand for single-turn
+        config: {
+            systemInstruction: MASTER_PROMPT,
+            temperature: opts.temperature ?? 0.7,
+            ...(opts.json ? { responseMimeType: 'application/json' } : {})
+        }
+    });
+    // In @google/genai v1.x, response.text is a PROPERTY (string), not a method
+    return response.text;
+}
+
+// Fetches Twilio media as base64 for vision requests
 async function getMediaPart(url) {
     const response = await axios.get(url, {
         responseType: 'arraybuffer',
@@ -27,88 +42,56 @@ async function getMediaPart(url) {
 }
 
 async function generateQuickQueryResponse(query, lang) {
-    if (!apiKey) return lang === 'th-TH' ? 'ระบบไม่พร้อมใช้งาน - กรุณาตรวจสอบ API key' : 'AI not initialized. Check GEMINI_API_KEY.';
     try {
-        const ai = getAI();
-        // @google/genai v1.x correct usage
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',   // use 2.0-flash — widely available on free tier
-            contents: query,             // simple string shorthand works for single-turn
-            config: {
-                systemInstruction: MASTER_PROMPT,
-                temperature: 0.7
-            }
-        });
-        return response.text;
+        return await callGemini(query);
     } catch (e) {
-        console.error('LLM Quick Query Error:', e);
+        console.error('[services] generateQuickQueryResponse error:', e.message);
         return lang === 'th-TH' ? `ระบบมีปัญหา: ${e.message}` : `System error: ${e.message}`;
     }
 }
 
 async function generateDetailedPlanConversation(params, recentUtterance, lang) {
-    if (!apiKey) return { message: 'AI not initialized.', updatedParams: params };
     try {
-        const progressContext = `CURRENT COLLECTED DATA:\n${JSON.stringify(params, null, 2)}\n`;
-        const contentStr = `
+        const prompt = `
 MODE 2: Detailed Planning.
-${progressContext}
+CURRENT DATA: ${JSON.stringify(params)}
 
-The user just said: "${recentUtterance}".
+User just said: "${recentUtterance}"
 
-Identify any new info (name, location, pastCrop, targetCrop, soilType, terrain).
-When all 6 are collected, also add: marketInsight, costStrategy, laborForecast, climateResilience.
+Collect missing fields one at a time: name, location, pastCrop, targetCrop, soilType, terrain.
+When all 6 collected, add: marketInsight, costStrategy, laborForecast, climateResilience.
 Respond in ${lang === 'th-TH' ? 'Thai' : 'English'}.
 
-Return ONLY valid JSON (no markdown fences):
-{
-  "message": "your conversational response",
-  "updatedParams": {
-    "name": "...", "location": "...", "pastCrop": "...",
-    "targetCrop": "...", "soilType": "...", "terrain": "...",
-    "marketInsight": "...", "costStrategy": "...",
-    "laborForecast": "...", "climateResilience": "..."
-  }
-}`;
+Return ONLY valid JSON (no markdown):
+{"message":"...","updatedParams":{"name":"","location":"","pastCrop":"","targetCrop":"","soilType":"","terrain":"","marketInsight":"","costStrategy":"","laborForecast":"","climateResilience":""}}`;
 
-        const ai = getAI();
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: contentStr,
-            config: {
-                systemInstruction: MASTER_PROMPT,
-                temperature: 0.7,
-                responseMimeType: 'application/json'
-            }
-        });
-
-        const text = response.text.replace(/```json|```/gi, '').trim();
-        return JSON.parse(text);
+        const text = await callGemini(prompt, { json: true });
+        const cleaned = text.replace(/```json|```/gi, '').trim();
+        return JSON.parse(cleaned);
     } catch (e) {
-        console.error('LLM Detailed Plan Error:', e);
-        return { message: `System error: ${e.message}`, updatedParams: params };
+        console.error('[services] generateDetailedPlanConversation error:', e.message);
+        return { message: `Error: ${e.message}`, updatedParams: params };
     }
 }
 
 async function generateVisionDiagnostic(textMsg, hasMedia, lang, mediaUrl = null) {
-    if (!apiKey) return lang === 'th-TH' ? 'ระบบไม่พร้อมใช้งาน' : 'AI not initialized.';
     try {
+        const ai = getAI();
         const promptText = hasMedia
-            ? `[IMAGE DIAGNOSTICS]. User sent a photo of their crop. Text: "${textMsg}". Give a professional visual diagnostic in ${lang === 'th-TH' ? 'Thai' : 'English'}.`
-            : `[TEXT REQUEST]. User asked: "${textMsg}". Answer helpfully in ${lang === 'th-TH' ? 'Thai' : 'English'}.`;
+            ? `[IMAGE DIAGNOSTICS] User photo of crop. Text: "${textMsg}". Diagnose in ${lang === 'th-TH' ? 'Thai' : 'English'}.`
+            : `[TEXT] User asked: "${textMsg}". Answer in ${lang === 'th-TH' ? 'Thai' : 'English'}.`;
 
-        // Build contents array — text first, image second if present
         const parts = [{ text: promptText }];
+
         if (hasMedia && mediaUrl) {
             try {
-                const imagePart = await getMediaPart(mediaUrl);
-                parts.push(imagePart);
+                parts.push(await getMediaPart(mediaUrl));
             } catch (imgErr) {
-                console.error('Failed to fetch WhatsApp image:', imgErr.message);
+                console.error('[services] image fetch failed:', imgErr.message);
             }
         }
 
-        const ai = getAI();
+        // Multi-part needs the full contents array format
         const response = await ai.models.generateContent({
             model: 'gemini-2.0-flash',
             contents: [{ role: 'user', parts }],
@@ -120,22 +103,16 @@ async function generateVisionDiagnostic(textMsg, hasMedia, lang, mediaUrl = null
 
         return response.text;
     } catch (e) {
-        console.error('LLM Vision Error:', e);
-        return `System Error: ${e.message}`;
+        console.error('[services] generateVisionDiagnostic error:', e.message);
+        return lang === 'th-TH' ? `ระบบมีปัญหา: ${e.message}` : `System error: ${e.message}`;
     }
 }
 
-async function fetchLocalDataMock(location) {
-    await new Promise(r => setTimeout(r, 500));
+async function fetchLocalDataMock() {
     return {
-        weather: 'Partly cloudy, 28°C. Expected heavy rainfall in 48 hours.',
-        satellite_agronomy: 'NDVI 0.65 (moderate vigor). Soil moisture slightly deficient.'
+        weather: 'Partly cloudy, 28°C. Heavy rainfall in 48 hours.',
+        satellite_agronomy: 'NDVI 0.65. Soil moisture slightly deficient.'
     };
 }
 
-module.exports = {
-    generateQuickQueryResponse,
-    generateDetailedPlanConversation,
-    generateVisionDiagnostic,
-    fetchLocalDataMock
-};
+module.exports = { generateQuickQueryResponse, generateDetailedPlanConversation, generateVisionDiagnostic, fetchLocalDataMock };
