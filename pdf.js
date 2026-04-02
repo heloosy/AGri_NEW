@@ -41,10 +41,9 @@ function generatePlanPDF(params, outputPath) {
 
             drawEntry('FARMER NAME:', params.name);
             drawEntry('LOCATION:', params.location);
-            drawEntry('SOIL PROFILE:', params.soil);
+            drawEntry('SOIL PROFILE:', params.soilType);           // FIX: was params.soil
             drawEntry('TERRAIN:', params.terrain);
-            drawEntry('PLANTING CYCLE:', `${params.pastCrop} -> ${params.currentIdea}`);
-            doc.y = currentY + 10;
+            drawEntry('PLANTING CYCLE:', `${params.pastCrop || 'N/A'} -> ${params.targetCrop || params.currentIdea || 'N/A'}`); // FIX: support both key names
 
             // --- HYPER-LOCAL INTELLIGENCE (ALERTS) ---
             doc.rect(50, doc.y, 500, 75).fill('#fff8e1'); // Light orange alert box
