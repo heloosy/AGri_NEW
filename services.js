@@ -1,8 +1,26 @@
 const { GoogleGenAI } = require('@google/genai');
+const axios = require('axios');
 const { MASTER_PROMPT } = require('./prompts');
 
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+// Fetches a Twilio-hosted media file (image) as base64 so Gemini can see it
+async function getMediaPart(url) {
+    const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        auth: {
+            username: process.env.TWILIO_ACCOUNT_SID,
+            password: process.env.TWILIO_AUTH_TOKEN
+        }
+    });
+    return {
+        inlineData: {
+            data: Buffer.from(response.data).toString('base64'),
+            mimeType: response.headers['content-type'] || 'image/jpeg'
+        }
+    };
+}
 
 async function generateQuickQueryResponse(query, lang) {
     if (!ai) return lang === 'th-TH' ? 'ระบบไม่พร้อมใช้งาน - กรุณาตรวจสอบ API key' : 'AI not initialized. Check GEMINI_API_KEY.';
@@ -73,20 +91,31 @@ Output your response in valid JSON format ONLY:
 
 }
 
-async function generateVisionDiagnostic(textMsg, hasMedia, lang) {
+async function generateVisionDiagnostic(textMsg, hasMedia, lang, mediaUrl = null) {
     if (!ai) return lang === 'th-TH' ? 'ระบบไม่พร้อมใช้งาน' : 'AI not initialized.';
     try {
-        const promptParams = hasMedia 
-            ? `[IMAGE DIAGNOSTICS REQUEST]. The user attached a photo of their crop. User text: "${textMsg}". Respond with a professional visual diagnostic and report findings alongside your Confidence Score in ${lang === 'th-TH' ? 'Thai' : 'English'}.`
+        const promptText = hasMedia 
+            ? `[IMAGE DIAGNOSTICS REQUEST]. The user attached a photo of their crop. User text: "${textMsg}". Respond with a professional visual diagnostic and report findings in ${lang === 'th-TH' ? 'Thai' : 'English'}.`
             : `[STANDARD TEXT REQUEST]. The user asked: "${textMsg}". Answer in a highly structured, professional format in ${lang === 'th-TH' ? 'Thai' : 'English'}.`;
-            
+
+        // FIX: build content parts — include the real image if a URL was provided
+        const parts = [{ text: promptText }];
+        if (hasMedia && mediaUrl) {
+            try {
+                const imagePart = await getMediaPart(mediaUrl);
+                parts.push(imagePart);
+            } catch (imgErr) {
+                console.error('Failed to fetch WhatsApp media image:', imgErr.message);
+                // Continue with text-only if image fetch fails
+            }
+        }
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             systemInstruction: { parts: [{ text: MASTER_PROMPT }] },
-            contents: [{ role: 'user', parts: [{ text: promptParams }] }],
+            contents: [{ role: 'user', parts }],
             generationConfig: { temperature: 0.8 }
         });
-
 
         return response.text;
 
@@ -94,7 +123,6 @@ async function generateVisionDiagnostic(textMsg, hasMedia, lang) {
         console.error("LLM Vision Error:", e);
         return `System Error: ${e.message}`;
     }
-
 }
 
 async function fetchLocalDataMock(location) {
