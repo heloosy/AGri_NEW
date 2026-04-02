@@ -1,0 +1,109 @@
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+
+/**
+ * Generates a world-class professional agronomy plan PDF for smallholder farmers.
+ */
+function generatePlanPDF(params, outputPath) {
+    return new Promise((resolve, reject) => {
+        try {
+            const doc = new PDFDocument({ 
+                margin: 50,
+                size: 'A4',
+                info: {
+                    Title: 'AgriSpark Master Agronomy Plan',
+                    Author: 'AgriSpark AI 2.0'
+                }
+            });
+            const stream = fs.createWriteStream(outputPath);
+            doc.pipe(stream);
+
+            // --- HEADER & BRANDING ---
+            doc.rect(0, 0, 600, 100).fill('#1a1a1a');
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(32).text('AgriSpark 2.0', 50, 35);
+            doc.fontSize(10).font('Helvetica').text('AI-POWERED PRECISION AGRICULTURE FOR SMALLHOLDERS', 50, 75);
+            doc.moveDown(4);
+
+            // --- USER INFORMATION ---
+            doc.fillColor('#000000').font('Helvetica-Bold').fontSize(16).text('FARM INITIALIZATION REPORT');
+            doc.moveTo(50, doc.y).lineTo(550, doc.y).strokeColor('#eeeeee').stroke();
+            doc.moveDown(1);
+
+            const labelX = 50;
+            const valueX = 180;
+            let currentY = doc.y;
+
+            const drawEntry = (label, value) => {
+                doc.font('Helvetica-Bold').fontSize(11).text(label, labelX, currentY);
+                doc.font('Helvetica').text(value || 'Not provided', valueX, currentY);
+                currentY += 20;
+            };
+
+            drawEntry('FARMER NAME:', params.name);
+            drawEntry('LOCATION:', params.location);
+            drawEntry('SOIL PROFILE:', params.soil);
+            drawEntry('TERRAIN:', params.terrain);
+            drawEntry('PLANTING CYCLE:', `${params.pastCrop} -> ${params.currentIdea}`);
+            doc.y = currentY + 10;
+
+            // --- HYPER-LOCAL INTELLIGENCE (ALERTS) ---
+            doc.rect(50, doc.y, 500, 75).fill('#fff8e1'); // Light orange alert box
+            doc.fillColor('#f57c00').font('Helvetica-Bold').fontSize(12).text('CLIMATE & SATELLITE ALERT', 65, doc.y + 15);
+            doc.fillColor('#444444').font('Helvetica').fontSize(10).text(`Weather: Partly cloudy, 28°C. Heavy rainfall expected in 48 hours.`, 65, doc.y + 10);
+            doc.text(`Satellite Vigor (NDVI): 0.65 (Moderate). Soil moisture is deficient.`, 65, doc.y + 5);
+            doc.moveDown(6);
+
+            // --- ACTION PLAN TABLE ---
+            doc.fillColor('#2c7a2c').font('Helvetica-Bold').fontSize(14).text('7-DAY PRECISION ACTION PLAN');
+            doc.moveDown(0.5);
+
+            const tableTop = doc.y;
+            const rowHeight = 25;
+            const col1 = 50, col2 = 120, col3 = 250;
+
+            // Table Header
+            doc.rect(col1, tableTop, 500, rowHeight).fill('#2c7a2c');
+            doc.fillColor('#ffffff').fontSize(10).text('Date', col1 + 10, tableTop + 8);
+            doc.text('Key Task', col2 + 10, tableTop + 8);
+            doc.text('Professional Advice', col3 + 10, tableTop + 8);
+
+            // Table Rows
+            const renderRow = (y, date, task, advice) => {
+                doc.fillColor('#000000').font('Helvetica').fontSize(9);
+                doc.text(date, col1 + 10, y + 8);
+                doc.text(task, col2 + 10, y + 8);
+                doc.text(advice, col3 + 10, y + 8, { width: 300 });
+                doc.moveTo(col1, y + rowHeight).lineTo(550, y + rowHeight).strokeColor('#eeeeee').stroke();
+            };
+
+            renderRow(tableTop + rowHeight, 'Apr 4', 'Basal Feed', 'Apply split fertilizer dose to minimize runoff.');
+            renderRow(tableTop + (rowHeight * 2), 'Apr 6', 'Drainage', 'Clear all channels before the expected rain.');
+            renderRow(tableTop + (rowHeight * 3), 'Apr 8', 'Pest Watch', 'High humidity. Monitor for Rice Blast symptoms.');
+
+            doc.y = tableTop + (rowHeight * 4.5);
+
+            // --- NEW SECTIONS: MARKET, COST, RESILIENCE ---
+            const drawSection = (title, content, color) => {
+                doc.fillColor(color).font('Helvetica-Bold').fontSize(13).text(title);
+                doc.fillColor('#444444').font('Helvetica').fontSize(11).text(content, { align: 'justify' });
+                doc.moveDown(1.5);
+            };
+
+            drawSection('MARKET INTELLIGENCE & ROI', params.marketInsight || 'No market data available.', '#1976d2');
+            drawSection('COST OPTIMIZATION STRATEGY', params.costStrategy || 'Default fertilizer split strategy recommended.', '#d32f2f');
+            drawSection('LABOR & RESOURCE FORECAST', params.laborForecast || 'Standard labor requirements.', '#7b1fa2');
+            drawSection('CLIMATE RESILIENCE STRATEGY', params.climateResilience || 'Monitor moisture levels closely.', '#388e3c');
+
+            // --- FOOTER ---
+            doc.fontSize(8).fillColor('#999999').text('Generated by AgriSpark 2.0 AI Decision Support System. Confidential & Professional.', 50, 780, { align: 'center' });
+
+            doc.end();
+            stream.on('finish', () => resolve(outputPath));
+            stream.on('error', (err) => reject(err));
+        } catch(e) {
+            reject(e);
+        }
+    });
+}
+
+module.exports = { generatePlanPDF };
